@@ -1,9 +1,9 @@
 <?php
 /**
  * Module: DefaultOrderFilter
- * Description: Ensures the Orders grid always loads with a default date filter (today) unless overridden.
+ * Description: Set default order grid date filter (last 7 days) if not set manually.
  * Author: Mohammad Babaei - https://adschi.com
- * Version: 1.0.4
+ * Version: 1.0.5
  */
 
 if (!defined('_PS_VERSION_')) {
@@ -11,9 +11,6 @@ if (!defined('_PS_VERSION_')) {
 }
 
 use PrestaShop\PrestaShop\Core\Grid\Definition\Factory\OrderGridDefinitionFactory;
-use PrestaShop\PrestaShop\Core\Grid\Definition\DefinitionInterface;
-use PrestaShop\PrestaShop\Core\Search\Filters\OrderFilters;
-use Symfony\Component\HttpFoundation\Request;
 
 class DefaultOrderFilter extends Module
 {
@@ -21,87 +18,55 @@ class DefaultOrderFilter extends Module
     {
         $this->name = 'defaultorderfilter';
         $this->tab = 'administration';
-        $this->version = '1.0.4';
+        $this->version = '1.0.5';
         $this->author = 'Mohammad Babaei - https://adschi.com';
         $this->bootstrap = true;
 
         parent::__construct();
 
         $this->displayName = $this->l('Default Orders Date Filter');
-        $this->description = $this->l('Loads the Orders grid with today’s date filter by default.');
+        $this->description = $this->l('Automatically sets a default date range (last 7 days) on orders page.');
         $this->ps_versions_compliancy = ['min' => '1.7.0.0', 'max' => '1.7.99.99'];
     }
 
     public function install()
     {
         return parent::install()
-            // دو هوک برای پوشش همه حالتها
-            && $this->registerHook('actionOrderGridDefinitionModifier')
             && $this->registerHook('actionGridFilterSubmitBefore');
     }
 
     public function uninstall()
     {
-        $this->unregisterHook('actionOrderGridDefinitionModifier');
-        $this->unregisterHook('actionGridFilterSubmitBefore');
-
-        return parent::uninstall();
+        return $this->unregisterHook('actionGridFilterSubmitBefore') && parent::uninstall();
     }
 
     /**
-     * قبل از رندر تعریف گرید، مقدار پیش‌فرض فرم فیلتر تاریخ را تنظیم می‌کند
-     */
-    public function hookActionOrderGridDefinitionModifier(array $params)
-    {
-        // فقط گرید سفارشات
-        if (empty($params['id']) || $params['id'] !== OrderGridDefinitionFactory::GRID_ID) {
-            return;
-        }
-
-        /** @var DefinitionInterface $definition */
-        $definition = $params['definition'];
-        $filters = $definition->getFilters();
-
-        // از توابع Tools برای گرفتن GET استفاده می‌کنیم
-        $from = \Tools::getValue('filters[date_add][from]', null);
-        $to   = \Tools::getValue('filters[date_add][to]', null);
-
-        // اگر هیچ فیلتری نیست، ست می‌کنیم
-        if (empty($from) && empty($to)) {
-            $today = date('Y-m-d');
-            $filters->setDefaultValue('date_add', [
-                'from' => $today,
-                'to'   => $today,
-            ]);
-            // لاگ برای دیباگ
-            file_put_contents(_PS_ROOT_DIR_ . '/var/logs/defaultorderfilter.log',
-                "[DefinitionModifier] default date_add set to {$today}\n", FILE_APPEND
-            );
-        }
-    }
-
-    /**
-     * بعد از submit فیلتر (یا رفتار ریست)، اگر همچنان هیچ فیلتری نباشد، دوباره از امروز تا امروز ست می‌کند
+     * Inject default filter for order grid if none exists
      */
     public function hookActionGridFilterSubmitBefore(array $params)
     {
-        if (empty($params['grid_id']) || $params['grid_id'] !== 'order') {
+        // فقط روی گرید سفارشات
+        if ($params['grid_id'] !== 'order') {
             return;
         }
 
-        // پارامترهای فیلتر را می‌خوانیم
+        // فیلترها از URL با prefix خاص مثل order[filters] وارد می‌شن
         $filters = $params['filters'] ?? [];
-        $from   = $filters['date_add[from]'] ?? null;
-        $to     = $filters['date_add[to]']   ?? null;
+
+        // بررسی آیا فیلتر تاریخ خالی است
+        $from = $filters['date_add[from]'] ?? null;
+        $to   = $filters['date_add[to]'] ?? null;
 
         if (empty($from) && empty($to)) {
             $today = date('Y-m-d');
-            $params['filters']['date_add[from]'] = $today;
-            $params['filters']['date_add[to]']   = $today;
-            // لاگ برای دیباگ
+            $last7 = date('Y-m-d', strtotime('-7 days'));
+
+            $params['filters']['date_add[from]'] = $last7;
+            $params['filters']['date_add[to]'] = $today;
+
+            // (اختیاری) برای دیباگ لاگ بنویس
             file_put_contents(_PS_ROOT_DIR_ . '/var/logs/defaultorderfilter.log',
-                "[FilterSubmitBefore] default date_add[from,to] = {$today}\n", FILE_APPEND
-            );
+                "[AutoInject] Filter applied from $last7 to $today\n", FILE_APPEND);
         }
     }
 }
